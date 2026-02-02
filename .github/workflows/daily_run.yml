@@ -1,0 +1,32 @@
+name: Daily AI Report
+
+on:
+  schedule:
+    # 每天北京时间 7:00 运行 (GitHub用的是UTC时间，所以是前一天 23:00)
+    - cron: '0 23 * * *'
+  workflow_dispatch: # 允许你手动点击按钮触发测试
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install google-genai yfinance feedparser pandas requests
+
+    - name: Run Script
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+        EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      run: python daily_strategy_cloud.py

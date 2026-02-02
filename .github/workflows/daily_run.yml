@@ -2,8 +2,8 @@ name: Daily AI Report
 
 on:
   schedule:
-    # ⚠️ 这里的 23:00 UTC = 北京时间 7:00
-    - cron: '0 23 * * *'
+    # ⚠️ 这里的 23:15 UTC = 北京时间 7:15
+    - cron: '15 23 * * *'
   workflow_dispatch:
 
 # 赋予写权限，以便将日报自动保存回 Obsidian

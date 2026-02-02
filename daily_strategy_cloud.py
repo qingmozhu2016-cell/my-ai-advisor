@@ -28,13 +28,12 @@ REPORT_DIR = "./AI_Reports"
 
 def get_sina_data(symbol_code, name):
     """
-    🇨🇳 新浪财经实时接口 (解决 Yahoo A股延迟问题)
-    格式: http://hq.sinajs.cn/list=sh000001
+    🇨🇳 新浪财经实时接口 (A股 + 黄金)
+    格式统一，速度最快。
     """
     try:
         headers = {'Referer': 'https://finance.sina.com.cn'}
         resp = requests.get(f"http://hq.sinajs.cn/list={symbol_code}", headers=headers)
-        # 返回数据格式: var hq_str_sh000001="上证指数,开,昨收,现价,高,低...";
         content = resp.text
         if "," not in content: return None
         
@@ -42,7 +41,7 @@ def get_sina_data(symbol_code, name):
         current_price = float(data[3]) # 现价
         prev_close = float(data[2])    # 昨收
         
-        # 停牌或未开盘时，现价可能为0，取昨收
+        # 停牌或集合竞价期间防错
         if current_price == 0: current_price = prev_close
             
         change_pct = ((current_price - prev_close) / prev_close) * 100
@@ -52,49 +51,47 @@ def get_sina_data(symbol_code, name):
         return None
 
 def get_yahoo_realtime(symbol):
-    """🌍 Yahoo 实时接口 (用于美债、黄金、比特币)"""
+    """🌍 Yahoo 实时接口 (美债、比特币)"""
     try:
         ticker = yf.Ticker(symbol)
-        # 强制获取最新分时数据
         df = ticker.history(period="2d", interval="60m")
         if df.empty: return None
-        
         price = df['Close'].iloc[-1]
-        # 简单的涨跌计算逻辑
         prev = df['Close'].iloc[0] 
         change = ((price - prev) / prev) * 100
         return price, change
     except: return None
 
 def get_market_table():
-    """生成混合数据源行情表"""
-    print("📊 正在同步全球行情 (Sina + Yahoo)...")
+    """生成混合行情表 (黄金已切换至人民币计价)"""
+    print("📊 正在同步行情 (黄金已切换至 Sina)...")
     
-    # 1. 定义数据源
-    # A股用新浪 (代码前加 sh/sz)
+    # 1. 新浪源 (A股 + 黄金ETF)
+    # sh518880 是国内主流的黄金ETF，完美代表人民币金价
     sina_tickers = [
         ('sh000001', '🇨🇳 上证指数'),
         ('sz399006', '🇨🇳 创业板指'),
+        ('sh518880', '🟡 黄金ETF(人民币)') 
     ]
-    # 全球用 Yahoo
+    
+    # 2. Yahoo源 (外围)
     yahoo_tickers = {
         'CNY=X': '💱 美元/人民币', 
-        'GC=F': '🟡 黄金期货',
         'BTC-USD': '🪙 比特币',
         '^TNX': '🇺🇸 10年美债'
     }
 
     md_table = "| 资产 | 最新价 | 涨跌幅 |\n|---|---|---|\n"
 
-    # 2. 抓取新浪数据
+    # 抓取新浪
     for code, name in sina_tickers:
         res = get_sina_data(code, name)
         if res:
             price, chg = res
             icon = "🔺" if chg > 0 else "💚"
-            md_table += f"| {name} | {price:.2f} | {icon} {chg:+.2f}% |\n"
+            md_table += f"| {name} | {price:.3f} | {icon} {chg:+.2f}% |\n"
 
-    # 3. 抓取 Yahoo 数据
+    # 抓取 Yahoo
     for symbol, name in yahoo_tickers.items():
         res = get_yahoo_realtime(symbol)
         if res:
@@ -119,7 +116,7 @@ def get_news_brief():
         try:
             feed = feedparser.parse(src["url"])
             if not feed.entries: continue
-            for entry in feed.entries[:3]: # 每个源取3条，交给AI选5条
+            for entry in feed.entries[:3]: 
                 news_list.append(f"【{src['name']}】{entry.title}")
         except: pass
     return "\n".join(news_list)
@@ -136,7 +133,10 @@ def get_obsidian_knowledge():
     return context
 
 def send_rich_email(title, md_content, filename):
-    """发送富文本邮件 (HTML正文 + MD附件)"""
+    """
+    发送精致排版的 HTML 邮件
+    优化点：增加段间距，优化字体，适配手机
+    """
     if not EMAIL_USER: return
     
     msg = MIMEMultipart()
@@ -144,21 +144,52 @@ def send_rich_email(title, md_content, filename):
     msg['From'] = formataddr(("朱文翔的AI助理", EMAIL_USER))
     msg['To'] = EMAIL_TO
     
-    # 1. 生成 HTML 正文 (手机适配样式)
+    # MD 转 HTML
     html_body = markdown.markdown(md_content, extensions=['tables'])
     
-    # 添加 CSS 样式，让手机阅读更舒服
+    # --- CSS 核心美化区 ---
     html_style = """
     <html>
     <head>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 10px; }
-        h1, h2, h3 { color: #2c3e50; margin-top: 20px; }
-        table { border-collapse: collapse; width: 100%; margin: 15px 0; font-size: 14px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        blockquote { border-left: 4px solid #4caf50; padding-left: 10px; color: #666; background: #f9f9f9; }
-        li { margin-bottom: 5px; }
+        /* 全局适配手机 */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif; 
+            line-height: 1.8; /* 增大行高 */
+            color: #333; 
+            max-width: 600px; /* 限制宽度，手机看更舒服 */
+            margin: 0 auto; 
+            padding: 15px;
+            background-color: #fcfcfc;
+        }
+        
+        /* 标题美化 */
+        h1 { font-size: 22px; color: #1a1a1a; margin-top: 25px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        h2 { font-size: 18px; color: #2c3e50; margin-top: 30px; border-left: 4px solid #d35400; padding-left: 10px; }
+        h3 { font-size: 16px; color: #555; margin-top: 20px; font-weight: bold; }
+        
+        /* 段落优化：拒绝长文 */
+        p { margin-bottom: 18px; text-align: justify; }
+        li { margin-bottom: 10px; }
+        
+        /* 表格美化 */
+        table { border-collapse: collapse; width: 100%; margin: 20px 0; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        th { background-color: #f8f9fa; color: #666; font-weight: 600; padding: 12px 8px; font-size: 13px; text-align: center; }
+        td { border-bottom: 1px solid #eee; padding: 12px 8px; font-size: 14px; text-align: center; color: #333; }
+        
+        /* 引用块美化 */
+        blockquote { 
+            background: #eef9f0; 
+            border-left: 4px solid #4caf50; 
+            margin: 20px 0; 
+            padding: 15px; 
+            color: #2e7d32; 
+            font-style: italic;
+            border-radius: 4px;
+        }
+        
+        /* 重点强调 */
+        strong { color: #d35400; }
     </style>
     </head>
     <body>
@@ -166,53 +197,70 @@ def send_rich_email(title, md_content, filename):
     full_html = f"{html_style}{html_body}</body></html>"
     msg.attach(MIMEText(full_html, 'html'))
 
-    # 2. 添加 MD 附件
+    # 添加附件
     try:
         with open(filename, "rb") as f:
             part = MIMEApplication(f.read(), Name=os.path.basename(filename))
         part['Content-Disposition'] = f'attachment; filename="{os.path.basename(filename)}"'
         msg.attach(part)
-    except Exception as e:
-        print(f"附件添加失败: {e}")
+    except: pass
 
-    # 3. 发送
     try:
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASS)
         server.sendmail(EMAIL_USER, [EMAIL_TO], msg.as_string())
         server.quit()
-        print("✅ HTML 邮件 + 附件已发送！")
+        print("✅ 邮件已发送！")
     except Exception as e:
         print(f"❌ 发送失败: {e}")
 
 def generate_report():
     date_str = datetime.now().strftime('%Y-%m-%d')
-    
-    # 1. 获取数据
     market = get_market_table()
     news = get_news_brief()
     knowledge = get_obsidian_knowledge()
     
     print("🤖 Gemini 正在生成策略...")
     
+    # 重新设计的 Prompt，强调排版
     prompt = f"""
-    【角色】朱文翔（资深理财经理，反脆弱践行者）。
-    【日期】{date_str}
+    【角色设定】
+    你叫朱文翔（资深投资顾问，反脆弱践行者）。
     
-    【任务】撰写《家庭财富风险管理日报》。
+    【任务】
+    生成一份《家庭财富风险管理日报》，Markdown格式。
     
-    【素材】
-    1. 行情（Sina实时源）：\n{market}
+    【输入素材】
+    1. 行情：\n{market}
     2. 新闻：\n{news}
     3. 笔记：\n{knowledge}
     
-    【要求】
-    1. **核心看板**：展示行情表，简评A股与外部环境的背离或联动。
-    2. **新闻Top 5**：精选5条对钱袋子影响最大的新闻，每条附带“影响点评”。
-    3. **策略建议**：
-       - 结合笔记库理论（最多引用1次），给出一个明确的操作指令（如：定投、止盈、观望）。
-       - 语气要像老朋友一样真诚。
+    【排版严格要求】
+    1. **头部格式**：
+       - 第一行：# 家庭财富风险管理日报
+       - 第二行：**朱文翔（资深投资顾问，反脆弱践行者）**
+       - 第三行：{date_str}
+       - (注意：不要写“执笔人”三个字，直接写名字)
+    
+    2. **正文可读性**：
+       - **禁止长难句**：每个段落不超过 3 行。
+       - **多用列表**：分析新闻时，请使用无序列表（- 点评...）。
+       - **留白**：板块之间保持清晰的间隔。
+    
+    【内容结构】
+    
+    **第一部分：核心资产看板**
+    - 展示行情表（注意黄金现在是人民币计价）。
+    - 用 2-3 个短句简评今日 A 股与黄金的表现。
+    
+    **第二部分：关键信号（Top 5）**
+    - 筛选 5 条最重要新闻。
+    - 每条新闻后，换行用 `> 💡 影响：...` 的格式简短点评。
+    
+    **第三部分：行动指南**
+    - 结合笔记库（最多引用1次），给出一个清晰的指令。
+    - 结尾语要温暖、坚定。
     """
     
     try:
@@ -222,14 +270,12 @@ def generate_report():
         )
         
         if response.text:
-            # 保存文件
             if not os.path.exists(REPORT_DIR): os.makedirs(REPORT_DIR)
             filepath = f"{REPORT_DIR}/{date_str}_AI_Daily.md"
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(response.text)
-                
-            # 发送邮件 (HTML + 附件)
-            send_rich_email(f"【AI内参】{date_str} 核心策略", response.text, filepath)
+            
+            send_rich_email(f"【内参】{date_str} 核心策略", response.text, filepath)
         else:
             print("❌ 生成内容为空")
             

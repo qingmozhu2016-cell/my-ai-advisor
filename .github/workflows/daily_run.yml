@@ -2,10 +2,11 @@ name: Daily AI Report
 
 on:
   schedule:
-    - cron: '0 23 * * *' # 北京时间 7:00
+    # ⚠️ 这里的 11:00 UTC = 北京时间 19:00
+    - cron: '0 11 * * *'
   workflow_dispatch:
 
-# ⚠️ 关键权限：允许 Workflow 修改仓库文件
+# 赋予写权限，以便将日报自动保存回 Obsidian
 permissions:
   contents: write
 
@@ -23,8 +24,9 @@ jobs:
         python-version: '3.12'
 
     - name: Install dependencies
+      # 记得加上 markdown 库，因为我们刚才升级了 HTML 邮件
       run: |
-        pip install google-genai yfinance feedparser pandas
+        pip install google-genai yfinance feedparser pandas markdown
 
     - name: Run Script
       env:
@@ -34,16 +36,16 @@ jobs:
         EMAIL_TO: ${{ secrets.EMAIL_TO }}
       run: python daily_strategy_cloud.py
 
-    # --- 新增：自动保存到 Obsidian (GitHub 仓库) ---
+    # 自动提交生成的日报到仓库 (Obsidian Git 会自动拉取这个)
     - name: Commit and Push Report
       run: |
         git config --global user.name "AI Assistant"
         git config --global user.email "ai@zhuwenxiang.com"
         
-        # 检查是否有新文件生成
+        # 将生成的报告加入版本控制
         git add AI_Reports/*.md
         
-        # 如果有变动才提交，避免报错
+        # 仅在有新文件时提交
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else

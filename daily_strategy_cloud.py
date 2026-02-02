@@ -28,8 +28,7 @@ REPORT_DIR = "./AI_Reports"
 
 def get_sina_data(symbol_code, name):
     """
-    🇨🇳 新浪财经实时接口 (A股 + 黄金)
-    格式统一，速度最快。
+    🇨🇳 新浪财经实时接口
     """
     try:
         headers = {'Referer': 'https://finance.sina.com.cn'}
@@ -38,10 +37,8 @@ def get_sina_data(symbol_code, name):
         if "," not in content: return None
         
         data = content.split('"')[1].split(',')
-        current_price = float(data[3]) # 现价
-        prev_close = float(data[2])    # 昨收
-        
-        # 停牌或集合竞价期间防错
+        current_price = float(data[3])
+        prev_close = float(data[2])
         if current_price == 0: current_price = prev_close
             
         change_pct = ((current_price - prev_close) / prev_close) * 100
@@ -51,7 +48,7 @@ def get_sina_data(symbol_code, name):
         return None
 
 def get_yahoo_realtime(symbol):
-    """🌍 Yahoo 实时接口 (美债、比特币)"""
+    """🌍 Yahoo 实时接口"""
     try:
         ticker = yf.Ticker(symbol)
         df = ticker.history(period="2d", interval="60m")
@@ -63,18 +60,15 @@ def get_yahoo_realtime(symbol):
     except: return None
 
 def get_market_table():
-    """生成混合行情表 (黄金已切换至人民币计价)"""
-    print("📊 正在同步行情 (黄金已切换至 Sina)...")
+    """生成混合行情表 (含特殊单位处理)"""
+    print("📊 正在同步行情 (黄金折算 + BTC美元)...")
     
-    # 1. 新浪源 (A股 + 黄金ETF)
-    # sh518880 是国内主流的黄金ETF，完美代表人民币金价
     sina_tickers = [
         ('sh000001', '🇨🇳 上证指数'),
         ('sz399006', '🇨🇳 创业板指'),
-        ('sh518880', '🟡 黄金ETF(人民币)') 
+        ('sh518880', '🟡 黄金价格(CNY)') 
     ]
     
-    # 2. Yahoo源 (外围)
     yahoo_tickers = {
         'CNY=X': '💱 美元/人民币', 
         'BTC-USD': '🪙 比特币',
@@ -83,29 +77,45 @@ def get_market_table():
 
     md_table = "| 资产 | 最新价 | 涨跌幅 |\n|---|---|---|\n"
 
-    # 抓取新浪
+    # 1. 处理新浪数据 (特殊处理黄金)
     for code, name in sina_tickers:
         res = get_sina_data(code, name)
         if res:
             price, chg = res
             icon = "🔺" if chg > 0 else "💚"
-            md_table += f"| {name} | {price:.3f} | {icon} {chg:+.2f}% |\n"
+            
+            # 💡 核心修改：黄金 ETF 价格 * 100 = 元/克
+            if "518880" in code:
+                real_gold_price = price * 100
+                fmt_price = f"{real_gold_price:.2f} 元/克"
+            else:
+                fmt_price = f"{price:.2f}"
+            
+            md_table += f"| {name} | {fmt_price} | {icon} {chg:+.2f}% |\n"
 
-    # 抓取 Yahoo
+    # 2. 处理 Yahoo 数据 (特殊处理比特币)
     for symbol, name in yahoo_tickers.items():
         res = get_yahoo_realtime(symbol)
         if res:
             price, chg = res
             icon = "🔺" if chg > 0 else "💚"
-            if "CNY" in symbol: fmt = f"{price:.4f}"
-            elif "^" in symbol: fmt = f"{price:.3f}%"
-            else: fmt = f"{price:.2f}"
+            
+            # 💡 核心修改：比特币加 $ 符号
+            if "BTC" in symbol: 
+                fmt = f"$ {price:,.2f}" # 加逗号分隔千分位
+            elif "CNY" in symbol: 
+                fmt = f"{price:.4f}"
+            elif "^" in symbol: 
+                fmt = f"{price:.3f}%"
+            else: 
+                fmt = f"{price:.2f}"
+                
             md_table += f"| {name} | {fmt} | {icon} {chg:+.2f}% |\n"
             
     return md_table
 
 def get_news_brief():
-    """获取新闻 (Top 5)"""
+    """获取新闻"""
     print("🌍 正在聚合新闻...")
     news_list = []
     sources = [
@@ -133,10 +143,7 @@ def get_obsidian_knowledge():
     return context
 
 def send_rich_email(title, md_content, filename):
-    """
-    发送精致排版的 HTML 邮件
-    优化点：增加段间距，优化字体，适配手机
-    """
+    """发送 HTML 邮件"""
     if not EMAIL_USER: return
     
     msg = MIMEMultipart()
@@ -144,52 +151,24 @@ def send_rich_email(title, md_content, filename):
     msg['From'] = formataddr(("朱文翔的AI助理", EMAIL_USER))
     msg['To'] = EMAIL_TO
     
-    # MD 转 HTML
     html_body = markdown.markdown(md_content, extensions=['tables'])
     
-    # --- CSS 核心美化区 ---
     html_style = """
     <html>
     <head>
     <style>
-        /* 全局适配手机 */
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif; 
-            line-height: 1.8; /* 增大行高 */
-            color: #333; 
-            max-width: 600px; /* 限制宽度，手机看更舒服 */
-            margin: 0 auto; 
-            padding: 15px;
-            background-color: #fcfcfc;
-        }
-        
-        /* 标题美化 */
-        h1 { font-size: 22px; color: #1a1a1a; margin-top: 25px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        h2 { font-size: 18px; color: #2c3e50; margin-top: 30px; border-left: 4px solid #d35400; padding-left: 10px; }
-        h3 { font-size: 16px; color: #555; margin-top: 20px; font-weight: bold; }
-        
-        /* 段落优化：拒绝长文 */
-        p { margin-bottom: 18px; text-align: justify; }
-        li { margin-bottom: 10px; }
-        
-        /* 表格美化 */
-        table { border-collapse: collapse; width: 100%; margin: 20px 0; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-        th { background-color: #f8f9fa; color: #666; font-weight: 600; padding: 12px 8px; font-size: 13px; text-align: center; }
-        td { border-bottom: 1px solid #eee; padding: 12px 8px; font-size: 14px; text-align: center; color: #333; }
-        
-        /* 引用块美化 */
-        blockquote { 
-            background: #eef9f0; 
-            border-left: 4px solid #4caf50; 
-            margin: 20px 0; 
-            padding: 15px; 
-            color: #2e7d32; 
-            font-style: italic;
-            border-radius: 4px;
-        }
-        
-        /* 重点强调 */
-        strong { color: #d35400; }
+        body { font-family: -apple-system, system-ui, sans-serif; line-height: 1.8; color: #333; max-width: 600px; margin: 0 auto; padding: 15px; }
+        h1 { font-size: 20px; color: #111; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 20px; }
+        h2 { font-size: 18px; color: #0056b3; margin-top: 30px; margin-bottom: 15px; border-left: 4px solid #0056b3; padding-left: 10px; }
+        h3 { font-size: 16px; font-weight: bold; margin-top: 20px; color: #444; }
+        p { margin-bottom: 15px; text-align: justify; }
+        ul { padding-left: 20px; margin-bottom: 20px; }
+        li { margin-bottom: 8px; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
+        th, td { border: 1px solid #e1e4e8; padding: 8px 10px; text-align: center; }
+        th { background-color: #f6f8fa; }
+        blockquote { border-left: 4px solid #28a745; background: #f0fff4; padding: 10px 15px; margin: 15px 0; color: #2c662d; border-radius: 4px; }
+        strong { color: #d73a49; }
     </style>
     </head>
     <body>
@@ -197,7 +176,6 @@ def send_rich_email(title, md_content, filename):
     full_html = f"{html_style}{html_body}</body></html>"
     msg.attach(MIMEText(full_html, 'html'))
 
-    # 添加附件
     try:
         with open(filename, "rb") as f:
             part = MIMEApplication(f.read(), Name=os.path.basename(filename))
@@ -223,7 +201,6 @@ def generate_report():
     
     print("🤖 Gemini 正在生成策略...")
     
-    # 重新设计的 Prompt，强调排版
     prompt = f"""
     【角色设定】
     你叫朱文翔（资深投资顾问，反脆弱践行者）。
@@ -238,29 +215,35 @@ def generate_report():
     
     【排版严格要求】
     1. **头部格式**：
-       - 第一行：# 家庭财富风险管理日报
-       - 第二行：**朱文翔（资深投资顾问，反脆弱践行者）**
-       - 第三行：{date_str}
-       - (注意：不要写“执笔人”三个字，直接写名字)
+       - # 家庭财富风险管理日报
+       - **朱文翔（资深投资顾问，反脆弱践行者）**
+       - {date_str}
     
-    2. **正文可读性**：
-       - **禁止长难句**：每个段落不超过 3 行。
-       - **多用列表**：分析新闻时，请使用无序列表（- 点评...）。
-       - **留白**：板块之间保持清晰的间隔。
+    2. **第三部分特别要求（强制分段）**：
+       - 指令和建议必须清晰分开，**绝对不要**写成一大段。
+       - 请严格按以下格式输出第三部分：
+         ### 行动指南
+         **【核心指令】**
+         (此处写指令，如：买入/持有/观望)
+         
+         **【逻辑支撑】**
+         (此处写分析逻辑，分段写)
+         
+         **【笔记共鸣】**
+         (如有引用，写在这里；如无引用，写心得)
     
     【内容结构】
     
     **第一部分：核心资产看板**
-    - 展示行情表（注意黄金现在是人民币计价）。
-    - 用 2-3 个短句简评今日 A 股与黄金的表现。
+    - 展示表格。
+    - 简评A股与黄金（注意黄金已折算为元/克）。
     
     **第二部分：关键信号（Top 5）**
-    - 筛选 5 条最重要新闻。
-    - 每条新闻后，换行用 `> 💡 影响：...` 的格式简短点评。
+    - 筛选 5 条新闻。
+    - 格式：`1. [标题]` -> 换行 -> `> 💡 影响：...`
     
     **第三部分：行动指南**
-    - 结合笔记库（最多引用1次），给出一个清晰的指令。
-    - 结尾语要温暖、坚定。
+    - 按上述要求的“强制分段格式”输出。
     """
     
     try:

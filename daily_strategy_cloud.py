@@ -107,15 +107,12 @@ def get_market_table():
     return md_table
 
 def get_news_brief():
-    """获取新闻 (新增新浪财经源)"""
+    """获取新闻 (含国内权威源)"""
     print("🌍 正在聚合新闻 (新浪 + 早报 + Yahoo)...")
     news_list = []
     sources = [
-        # 1. 新增：国内权威 - 新浪财经要闻
         {"name": "新浪财经", "url": "http://rss.sina.com.cn/roll/finance/hot_roll.xml"},
-        # 2. 华人视角 - 联合早报
         {"name": "联合早报", "url": "https://www.zaobao.com.sg/rss/finance.xml"},
-        # 3. 国际视角 - Yahoo (Prompt会负责翻译)
         {"name": "Yahoo", "url": "https://finance.yahoo.com/news/rssindex"}
     ]
     
@@ -123,7 +120,6 @@ def get_news_brief():
         try:
             feed = feedparser.parse(src["url"])
             if not feed.entries: continue
-            # 新浪源容易抓取过多，限制每个源只取前 3 条交给 AI 筛选
             for entry in feed.entries[:3]: 
                 news_list.append(f"【{src['name']}】{entry.title}")
         except: pass
@@ -199,6 +195,7 @@ def generate_report():
     
     print("🤖 Gemini 正在生成策略...")
     
+    # ⬇️ 这里已更新为你指定的第三部分指令
     prompt = f"""
     【角色】朱文翔（资深理财经理，注重风险控制）。
     【日期】{date_str}
@@ -207,7 +204,7 @@ def generate_report():
     
     【输入素材】
     1. 行情：\n{market}
-    2. 新闻池（含新浪、早报、Yahoo）：\n{news}
+    2. 新闻池：\n{news}
     3. 私人笔记库：\n{knowledge}
     
     【文章结构与约束】
@@ -217,10 +214,12 @@ def generate_report():
     - 一句话简评今日市场情绪。
     
     **第二部分：财经要闻（仅筛选 Top 5）**
-    - 从新闻池中精选 **5 条** 对中国家庭财富影响最大的新闻。
-    - **强制要求**：**所有新闻标题必须显示为中文**。如果素材是英文（如Yahoo），请务必翻译成中文再显示。
-    - 格式：`1. [中文标题]` 
-    - 点评：`> 影响分析：...`
+    - 精选 **5 条** 对中国家庭财富影响最大的新闻。
+    - **强制中文**：所有标题必须为中文。
+    - **严格输出格式（每条新闻包含三部分）**：
+      `1. [中文标题]`
+      `   [一句话说明：用通俗语言简述新闻核心内容]`
+      `   > 💡 对国内投资者的影响：[分析内容]`
     
     **第三部分：策略与建议**
     - 结合上述新闻，给出一条核心的操作建议。

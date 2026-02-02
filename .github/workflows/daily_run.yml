@@ -2,9 +2,12 @@ name: Daily AI Report
 
 on:
   schedule:
-    # 每天北京时间 7:00 运行 (GitHub用的是UTC时间，所以是前一天 23:00)
-    - cron: '0 23 * * *'
-  workflow_dispatch: # 允许你手动点击按钮触发测试
+    - cron: '0 23 * * *' # 北京时间 7:00
+  workflow_dispatch:
+
+# ⚠️ 关键权限：允许 Workflow 修改仓库文件
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -17,11 +20,11 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.9'
+        python-version: '3.12'
 
     - name: Install dependencies
       run: |
-        pip install google-genai yfinance feedparser pandas requests
+        pip install google-genai yfinance feedparser pandas
 
     - name: Run Script
       env:
@@ -30,3 +33,20 @@ jobs:
         EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
         EMAIL_TO: ${{ secrets.EMAIL_TO }}
       run: python daily_strategy_cloud.py
+
+    # --- 新增：自动保存到 Obsidian (GitHub 仓库) ---
+    - name: Commit and Push Report
+      run: |
+        git config --global user.name "AI Assistant"
+        git config --global user.email "ai@zhuwenxiang.com"
+        
+        # 检查是否有新文件生成
+        git add AI_Reports/*.md
+        
+        # 如果有变动才提交，避免报错
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Auto-save daily report [skip ci]"
+          git push
+        fi

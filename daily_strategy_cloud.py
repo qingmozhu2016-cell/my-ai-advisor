@@ -6,175 +6,99 @@ from google import genai
 from datetime import datetime
 import re
 import smtplib
-from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
 from email.utils import formataddr
-import markdown
+import pandas as pd
 
 # --- 1. 基础配置 ---
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 client = genai.Client(api_key=API_KEY)
 
-# 邮箱配置
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 EMAIL_USER = os.environ.get("EMAIL_USER", "").strip()
 EMAIL_PASS = os.environ.get("EMAIL_PASS", "").strip()
 EMAIL_TO = os.environ.get("EMAIL_TO", "").strip()
 
-# 路径配置
 OBSIDIAN_PATH = "./knowledge_base"
 REPORT_DIR = "./AI_Reports"
 
-# --- 2. 移动端适配样式 (CSS) ---
-HTML_STYLE = """
-<style>
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        line-height: 1.6;
-        color: #333;
-        margin: 0 auto;
-        padding: 10px 15px;
-        max-width: 600px;
-        font-size: 16px;
-    }
-    h1 {
-        font-size: 22px;
-        color: #2c3e50;
-        border-bottom: 2px solid #3498db;
-        padding-bottom: 10px;
-        margin-top: 0;
-    }
-    h2 {
-        font-size: 19px;
-        color: #e67e22;
-        margin-top: 25px;
-        border-left: 4px solid #e67e22;
-        padding-left: 10px;
-        background-color: #fff8f0;
-        padding: 5px 10px;
-    }
-    h3 { font-size: 17px; color: #2980b9; margin-top: 20px; }
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 15px 0;
-        font-size: 13px;
-    }
-    th {
-        background-color: #f4f6f7;
-        color: #333;
-        font-weight: bold;
-        padding: 8px 4px;
-        border: 1px solid #e1e4e8;
-        text-align: center;
-        white-space: nowrap;
-    }
-    td {
-        padding: 8px 4px;
-        border: 1px solid #e1e4e8;
-        text-align: center;
-    }
-    tr:nth-child(even) { background-color: #fbfbfc; }
-    blockquote {
-        border-left: 3px solid #ccc;
-        margin: 15px 0;
-        padding: 8px 12px;
-        color: #555;
-        background: #f9f9f9;
-        font-size: 15px;
-    }
-    strong { color: #c0392b; font-weight: 600; }
-    .footer {
-        margin-top: 30px;
-        font-size: 12px;
-        color: #999;
-        text-align: center;
-        border-top: 1px dashed #ddd;
-        padding-top: 15px;
-    }
-    @media screen and (max-width: 400px) {
-        body { padding: 8px; }
-        h1 { font-size: 20px; }
-        table { font-size: 12px; }
-    }
-</style>
-"""
+def get_realtime_price(symbol, name):
+    """
+    核心逻辑：使用 60分钟线 (interval='60m') 强制获取最新数据
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="5d", interval="60m")
+        
+        if df.empty: return None, None, None
 
-def get_market_data():
-    """获取核心资产数据"""
-    print("📊 正在获取行情...")
+        # 取最新一行
+        latest_price = df['Close'].iloc[-1]
+        last_date = df.index[-1].date()
+        
+        # 找“非今日”的最后一行作为昨日收盘
+        prev_data = df[df.index.date != last_date]
+        
+        if not prev_data.empty:
+            prev_close = prev_data['Close'].iloc[-1]
+            pct_change = ((latest_price - prev_close) / prev_close) * 100
+        else:
+            prev_close = df['Close'].iloc[0]
+            pct_change = 0.0
+
+        return latest_price, pct_change, last_date.strftime("%m-%d")
+
+    except:
+        return None, None, None
+
+def get_market_table():
+    """生成行情表格"""
+    print("📊 正在获取实时行情...")
     tickers = {
-        '000001.SS': '🇨🇳 上证',
-        '399006.SZ': '🇨🇳 创业板',
-        'CNY=X': '💱 汇率', 
-        'FXI': '🇨🇳 A50',
-        '^TNX': '🇺🇸 美债',
-        'GC=F': '🟡 黄金',
-        'BTC-USD': '🪙 BTC'
+        '000001.SS': '🇨🇳 上证指数',
+        '399006.SZ': '🇨🇳 创业板指',
+        'CNY=X': '💱 美元/人民币', 
+        'FXI': '🇨🇳 A50 (ETF)',
+        '^TNX': '🇺🇸 10年美债',
+        'GC=F': '🟡 黄金期货',
+        'BTC-USD': '🪙 比特币'
     }
     
-    # ⚠️ 修正缩进逻辑：将 try 块完整包裹
-    try:
-        data = yf.download(list(tickers.keys()), period="5d", progress=False)
+    md_table = "| 资产 | 日期 | 最新价 | 涨跌幅 |\n|---|---|---|---|\n"
+    
+    for symbol, name in tickers.items():
+        price, change, date_str = get_realtime_price(symbol, name)
         
-        # 稳健写法：避免单行 if-else 造成的缩进歧义
-        if 'Close' in data:
-            df = data['Close']
+        if price is not None:
+            icon = "🔺" if change > 0 else "💚"
+            # 格式化
+            if "CNY" in symbol: fmt = f"{price:.4f}"
+            elif "^" in symbol: fmt = f"{price:.3f}%"
+            else: fmt = f"{price:.2f}"
+            
+            md_table += f"| {name} | {date_str} | {fmt} | {icon} {change:+.2f}% |\n"
         else:
-            df = data
-        
-        md_table = "| 资产 | 日期 | 最新 | 涨跌 |\n|---|---|---|---|\n"
-        
-        for symbol, name in tickers.items():
-            try:
-                series = df[symbol].dropna()
-                if series.empty: continue
-                
-                last_date = series.index[-1]
-                price = series.iloc[-1]
-                prev = series.iloc[-2] if len(series) > 1 else price
-                
-                date_str = last_date.strftime('%m-%d')
-                today_str = datetime.now().strftime('%m-%d')
-                
-                if date_str == today_str:
-                    date_display = f"**{date_str}**"
-                else:
-                    date_display = f"{date_str}"
-
-                pct_change = ((price - prev) / prev) * 100
-                icon = "🔺" if pct_change > 0 else "💚"
-                
-                if "CNY" in symbol: fmt = f"{price:.4f}"
-                elif "^" in symbol: fmt = f"{price:.2f}%"
-                else: fmt = f"{price:.0f}"
-                
-                md_table += f"| {name} | {date_display} | {fmt} | {icon}{pct_change:+.1f}% |\n"
-            except: 
-                pass
-                
-        return md_table
-        
-    except Exception as e:
-        return f"*(行情数据不可用: {str(e)})*"
+            md_table += f"| {name} | - | 暂无 | - |\n"
+            
+    return md_table
 
 def get_news_brief():
-    """获取 Top 5 新闻"""
-    print("🌍 正在筛选新闻...")
+    """获取新闻 (多抓少取，交给AI筛选)"""
+    print("🌍 正在检索财经新闻...")
     news_list = []
     sources = [
-        {"name": "早报", "url": "https://www.zaobao.com.sg/rss/finance.xml"},
-        {"name": "Yahoo", "url": "https://finance.yahoo.com/news/rssindex"}
+        {"name": "联合早报", "url": "https://www.zaobao.com.sg/rss/finance.xml"},
+        {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex"}
     ]
     for src in sources:
         try:
             feed = feedparser.parse(src["url"])
             if not feed.entries: continue
+            # 这里虽然抓了前5条，但在 Prompt 里会限制输出数量
             for entry in feed.entries[:5]:
                 clean_summary = re.sub('<.*?>', '', getattr(entry, 'summary', '')).strip()
-                news_list.append(f"【{src['name']}】{entry.title} - {clean_summary[:80]}")
+                news_list.append(f"【{src['name']}】{entry.title}")
         except: pass
     return "\n".join(news_list)
 
@@ -189,99 +113,78 @@ def get_obsidian_knowledge():
             except: pass
     return context
 
-def save_and_send(title, markdown_content):
-    """保存并发送 (带附件 + 移动端适配)"""
+def save_and_send(title, content):
+    """保存并发送"""
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
     
     filename = f"{REPORT_DIR}/{datetime.now().strftime('%Y-%m-%d')}_AI_Daily.md"
     with open(filename, "w", encoding="utf-8") as f:
-        f.write(markdown_content)
-    print(f"✅ MD文件已保存: {filename}")
+        f.write(content)
 
     if not EMAIL_USER: return
-
-    msg = MIMEMultipart()
+    msg = MIMEText(content, 'plain', 'utf-8')
     msg['Subject'] = title
     msg['From'] = formataddr(("朱文翔的AI助理", EMAIL_USER))
     msg['To'] = EMAIL_TO
-
-    html_body = markdown.markdown(markdown_content, extensions=['tables', 'fenced_code'])
-    
-    full_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        {HTML_STYLE}
-    </head>
-    <body>
-        {html_body}
-        <div class="footer">
-            <p>Generated by Gemini 2.5 Pro | 朱文翔的 AI 助理</p>
-            <p>附件为 Markdown 原始文档，可直接导入 Obsidian</p>
-        </div>
-    </body>
-    </html>
-    """
-    msg.attach(MIMEText(full_html, 'html', 'utf-8'))
-
-    try:
-        with open(filename, "rb") as f:
-            part = MIMEApplication(f.read(), Name=os.path.basename(filename))
-        part['Content-Disposition'] = f'attachment; filename="{os.path.basename(filename)}"'
-        msg.attach(part)
-    except Exception as e:
-        print(f"⚠️ 附件添加失败: {e}")
 
     try:
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASS)
         server.sendmail(EMAIL_USER, [EMAIL_TO], msg.as_string())
+        print("✅ 邮件已发送！")
         server.quit()
-        print("✅ 邮件(移动端优化版)已发送！")
     except Exception as e:
         print(f"❌ 邮件发送失败: {e}")
 
 def generate_report():
     date_str = datetime.now().strftime('%Y-%m-%d')
-    market = get_market_data()
+    market = get_market_table()
     news = get_news_brief()
     knowledge = get_obsidian_knowledge()
     
-    print("🤖 Gemini 2.5 Pro 正在生成...")
+    print("🤖 Gemini 正在生成策略...")
     
     prompt = f"""
-    【角色】朱文翔（资深理财经理）。
+    【角色】朱文翔（资深理财经理，注重风险控制）。
     【日期】{date_str}
     
     【任务】生成《家庭财富风险管理日报》，Markdown格式。
     
-    【素材】
+    【输入素材】
     1. 行情：\n{market}
     2. 新闻池：\n{news}
-    3. 笔记：\n{knowledge}
+    3. 私人笔记库：\n{knowledge}
     
-    【结构要求】
-    **一、核心资产看板**
-    (展示行情表格，点评BTC/黄金)
+    【文章结构与约束】
     
-    **二、财经要闻速递 (Top 5)**
-    (筛选5条核心新闻。格式：`1. **标题**：点评`)
+    **第一部分：核心资产看板**
+    - 展示表格。
+    - 一句话简评今日市场情绪。
     
-    **三、深度策略 (引用笔记)**
-    (结合新闻和反脆弱笔记，给出一项具体操作建议)
+    **第二部分：财经要闻（仅筛选 Top 5）**
+    - 从新闻池中精选 **5 条** 对中国家庭财富影响最大的新闻。
+    - 格式：`1. [标题]` 
+    - 点评：`> 影响分析：...`
+    
+    **第三部分：策略与建议**
+    - 结合上述新闻，给出一条核心的操作建议。
+    - **引用约束**：如果笔记库中有极其契合的理论（如反脆弱），**最多引用 1 次**，不要为了引用而引用。如果没有合适的，就直接给出专业建议，不要强行引用。
     """
     
     try:
-        response = client.models.generate_content(model="gemini-2.5-pro", contents=prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=prompt
+        )
         if response.text:
-            save_and_send(f"【AI日报】{date_str} 精选策略", response.text)
+            save_and_send(f"【AI日报】{date_str} 核心行情与策略", response.text)
         else:
-            print("❌ 内容为空")
+            print("❌ 生成内容为空")
+            
     except Exception as e:
-        print(f"❌ 错误: {e}")
+        print(f"❌ 运行报错: {e}")
 
 if __name__ == "__main__":
     generate_report()

@@ -84,7 +84,7 @@ def get_market_table():
             price, chg = res
             icon = "🔺" if chg > 0 else "💚"
             
-            # 💡 核心修改：黄金 ETF 价格 * 100 = 元/克
+            # 💡 核心功能保留：黄金 ETF 价格 * 100 = 元/克
             if "518880" in code:
                 real_gold_price = price * 100
                 fmt_price = f"{real_gold_price:.2f} 元/克"
@@ -100,9 +100,9 @@ def get_market_table():
             price, chg = res
             icon = "🔺" if chg > 0 else "💚"
             
-            # 💡 核心修改：比特币加 $ 符号
+            # 💡 核心功能保留：比特币加 $ 符号
             if "BTC" in symbol: 
-                fmt = f"$ {price:,.2f}" # 加逗号分隔千分位
+                fmt = f"$ {price:,.2f}"
             elif "CNY" in symbol: 
                 fmt = f"{price:.4f}"
             elif "^" in symbol: 
@@ -201,7 +201,8 @@ def generate_report():
     
     print("🤖 Gemini 正在生成策略...")
     
-   prompt = f"""
+    # ⬇️ ⚠️ 这里已经替换为你指定的 Prompt
+    prompt = f"""
     【角色】朱文翔（资深理财经理，注重风险控制）。
     【日期】{date_str}
     
@@ -233,8 +234,14 @@ def generate_report():
             model="gemini-2.5-pro",
             contents=prompt
         )
+        
         if response.text:
-            save_and_send(f"【AI日报】{date_str} 核心行情与策略", response.text)
+            if not os.path.exists(REPORT_DIR): os.makedirs(REPORT_DIR)
+            filepath = f"{REPORT_DIR}/{date_str}_AI_Daily.md"
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(response.text)
+            
+            send_rich_email(f"【内参】{date_str} 核心策略", response.text, filepath)
         else:
             print("❌ 生成内容为空")
             

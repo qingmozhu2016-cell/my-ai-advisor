@@ -13,83 +13,110 @@ from email.utils import formataddr
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 client = genai.Client(api_key=API_KEY)
 
+# 邮箱配置
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 EMAIL_USER = os.environ.get("EMAIL_USER", "").strip()
 EMAIL_PASS = os.environ.get("EMAIL_PASS", "").strip()
 EMAIL_TO = os.environ.get("EMAIL_TO", "").strip()
 
+# 路径配置
 OBSIDIAN_PATH = "./knowledge_base"
+REPORT_DIR = "./AI_Reports"  # 新增：生成的日报保存目录
 
-def get_china_market_data():
-    """获取核心资产行情"""
-    print("📊 正在同步核心资产行情...")
+def get_market_data():
+    """第一部分：核心指数 + 黄金/比特币"""
+    print("📊 正在获取全球核心资产数据...")
     tickers = {
         '000001.SS': '🇨🇳 上证指数',
         '399006.SZ': '🇨🇳 创业板指',
         'CNY=X': '💱 美元/人民币', 
-        'FXI': '🇨🇳 中国A50 (ETF代理)', 
+        'FXI': '🇨🇳 A50 (ETF)',
         '^TNX': '🇺🇸 10年美债',
-        'GC=F': '🟡 黄金期货'
+        'GC=F': '🟡 黄金期货',
+        'BTC-USD': '🪙 比特币'   # 新增比特币
     }
+    
     try:
-        data = yf.download(list(tickers.keys()), period="7d", progress=False)
+        data = yf.download(list(tickers.keys()), period="5d", progress=False)
         df = data['Close'] if 'Close' in data else data
-        md_table = "| 核心资产 | 最新报价 | 趋势 |\n|---|---|---|\n"
+        
+        md_table = "| 资产 | 最新价 | 涨跌 |\n|---|---|---|\n"
         for symbol, name in tickers.items():
             try:
+                # 强制去空值，取最近有效交易日
                 series = df[symbol].dropna()
                 if series.empty: continue
+                
                 price = series.iloc[-1]
                 prev = series.iloc[-2] if len(series) > 1 else price
-                icon = "🔺" if price > prev else "💚"
-                fmt = f"{price:.4f}" if "CNY" in symbol else (f"{price:.3f}%" if "^" in symbol else f"{price:.2f}")
-                md_table += f"| {name} | {fmt} | {icon} |\n"
+                
+                # 计算涨跌幅
+                pct_change = ((price - prev) / prev) * 100
+                icon = "🔺" if pct_change > 0 else "💚"
+                
+                # 格式化
+                if "CNY" in symbol: fmt = f"{price:.4f}"
+                elif "^" in symbol: fmt = f"{price:.3f}%"
+                else: fmt = f"{price:.2f}"
+                
+                md_table += f"| {name} | {fmt} | {icon} {pct_change:+.2f}% |\n"
             except: pass
         return md_table
-    except: return "*(行情接口暂时波动)*"
+    except: return "*(行情数据暂时不可用)*"
 
 def get_news_brief():
-    """获取新闻"""
-    print("🌍 正在聚合双语财经新闻...")
-    news_content = ""
+    """第二部分：获取 10 条重要新闻"""
+    print("🌍 正在聚合 10 条关键财经新闻...")
+    news_list = []
+    
+    # 源配置：为了凑够10条高质量新闻，我们多抓几个源
     sources = [
-        {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex"},
-        {"name": "联合早报", "url": "https://www.zaobao.com.sg/rss/finance.xml"}
+        {"name": "联合早报", "url": "https://www.zaobao.com.sg/rss/finance.xml"},
+        {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex"}
     ]
+    
     for src in sources:
         try:
             feed = feedparser.parse(src["url"])
             if not feed.entries: continue
-            news_content += f"\n**【{src['name']}】**\n"
-            for i, entry in enumerate(feed.entries[:3], 1):
+            
+            # 每个源取前 6 条，最后由 AI 筛选出最重要的 10 条
+            for entry in feed.entries[:6]:
                 clean_summary = re.sub('<.*?>', '', getattr(entry, 'summary', '')).strip()
-                news_content += f"{i}. {entry.title}\n"
+                news_list.append(f"【{src['name']}】{entry.title} - {clean_summary[:100]}")
         except: pass
-    return news_content
+    
+    return "\n".join(news_list)
 
 def get_obsidian_knowledge():
-    """读取私人笔记"""
-    print("🧠 正在加载知识库...")
+    """读取知识库"""
     context = ""
     if os.path.exists(OBSIDIAN_PATH):
-        files = glob.glob(os.path.join(OBSIDIAN_PATH, "*.md"))
-        for f in files:
+        for f in glob.glob(os.path.join(OBSIDIAN_PATH, "*.md")):
             try:
                 with open(f, 'r', encoding='utf-8') as file:
-                    context += f"\n【参考笔记：{os.path.basename(f)}】\n{file.read()[:2000]}\n"
+                    context += f"\n【笔记：{os.path.basename(f)}】\n{file.read()[:2000]}\n"
             except: pass
     return context
 
-def send_gmail(subject, content):
-    """发送邮件 (已修复格式问题)"""
-    if not EMAIL_USER: return
-
-    # ⚠️ 关键修复：将 'markdown' 改为 'plain'
-    # 这样手机和网页端才能正确把 Markdown 当作纯文本显示出来
-    msg = MIMEText(content, 'plain', 'utf-8') 
+def save_and_send(title, content):
+    """保存到仓库文件并发送邮件"""
     
-    msg['Subject'] = subject
+    # 1. 保存文件 (为了同步回 Obsidian)
+    if not os.path.exists(REPORT_DIR):
+        os.makedirs(REPORT_DIR)
+    
+    filename = f"{REPORT_DIR}/{datetime.now().strftime('%Y-%m-%d')}_AI_Daily.md"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"✅ 日报已保存至: {filename}")
+
+    # 2. 发送邮件
+    if not EMAIL_USER: return
+    
+    msg = MIMEText(content, 'plain', 'utf-8')
+    msg['Subject'] = title
     msg['From'] = formataddr(("朱文翔的AI助理", EMAIL_USER))
     msg['To'] = EMAIL_TO
 
@@ -101,49 +128,59 @@ def send_gmail(subject, content):
         server.quit()
         print("✅ 邮件已发送！")
     except Exception as e:
-        print(f"❌ 发送失败: {e}")
+        print(f"❌ 邮件发送失败: {e}")
 
 def generate_report():
     date_str = datetime.now().strftime('%Y-%m-%d')
-    market = get_china_market_data()
+    
+    market = get_market_data()
     news = get_news_brief()
     knowledge = get_obsidian_knowledge()
     
-    print("🤖 Gemini 正在思考...")
+    print("🤖 Gemini 2.5 Pro 正在生成策略...")
     
     prompt = f"""
-    【角色】朱文翔（资深保险理财师，信奉反脆弱与全天候策略）。
+    【角色】朱文翔（资深理财经理，关注家庭风控）。
     【日期】{date_str}
-    【素材】
-    1. 行情：{market}
-    2. 新闻：{news}
-    3. 笔记：{knowledge}
     
-    【任务】
-    写一份《家庭财富风险管理日报》（Markdown格式，600字）。
-    1. 点评中国资产表现。
-    2. 提炼1条关键新闻并点评。
-    3. 引用笔记中的观点，给出一个具体操作建议。
+    【任务】生成《家庭财富风险管理日报》，Markdown格式。
+    
+    【输入素材】
+    1. 行情：\n{market}
+    2. 新闻池（请从中筛选最重要的10条）：\n{news}
+    3. 你的笔记库：\n{knowledge}
+    
+    【文章结构要求】
+    
+    **第一部分：核心资产看板**
+    - 直接展示行情表格。
+    - 用一句话点评比特币和黄金的最新走势。
+    
+    **第二部分：财经要闻速递（Top 10）**
+    - 筛选 10 条对中国投资者最重要的新闻。
+    - 格式：`1. [新闻标题]`
+    - 紧跟一句点评：`> 对国内投资者的影响：...`
+    
+    **第三部分：深度策略与行动**
+    - **聚焦**：从上述新闻中挑选 1 条最关键的变动（如美债大涨、政策发布等）。
+    - **观点**：结合你的专业经验进行深度点评。**如果笔记库中有相关的反脆弱/全天候理论，请自然引用（不必强求，有则引，无则结合通用理财逻辑）。**
+    - **行动**：给出 1 条具体的家庭资产配置建议（如：买入、观望、置换美元等）。
     """
     
     try:
-        # ⚠️ 稳妥起见，改用 gemini-2.0-flash，速度快且稳定
+        # 换回 Pro 模型，能力更强
         response = client.models.generate_content(
-            model="gemini-2.0-flash", 
+            model="gemini-2.5-pro",
             contents=prompt
         )
         
-        # ⚠️ 增加空内容检查
         if response.text:
-            print(f"📝 生成成功！字数：{len(response.text)}")
-            send_gmail(f"【内参】家庭财富日报 ({date_str})", response.text)
+            save_and_send(f"【AI日报】{date_str} 核心行情与策略", response.text)
         else:
-            print("❌ 生成内容为空！")
-            send_gmail("【报错】今日生成失败", "Gemini 返回了空内容，请检查日志。")
+            print("❌ 生成内容为空")
             
     except Exception as e:
         print(f"❌ 运行报错: {e}")
-        send_gmail("【报错】脚本运行出错", str(e))
 
 if __name__ == "__main__":
     generate_report()

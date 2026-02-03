@@ -107,20 +107,22 @@ def get_market_table():
     return md_table
 
 def get_news_brief():
-    """获取新闻"""
+    """获取新闻 (加大国内新闻抓取量)"""
     print("🌍 正在聚合新闻...")
     news_list = []
     sources = [
-        {"name": "新浪财经", "url": "http://rss.sina.com.cn/roll/finance/hot_roll.xml"},
-        {"name": "联合早报", "url": "https://www.zaobao.com.sg/rss/finance.xml"},
-        {"name": "Yahoo", "url": "https://finance.yahoo.com/news/rssindex"}
+        # 新浪源抓取量增加到 6 条，确保有足够的国内素材供筛选
+        {"name": "新浪财经", "url": "http://rss.sina.com.cn/roll/finance/hot_roll.xml", "count": 6},
+        {"name": "联合早报", "url": "https://www.zaobao.com.sg/rss/finance.xml", "count": 3},
+        {"name": "Yahoo", "url": "https://finance.yahoo.com/news/rssindex", "count": 3}
     ]
     
     for src in sources:
         try:
             feed = feedparser.parse(src["url"])
             if not feed.entries: continue
-            for entry in feed.entries[:3]: 
+            limit = src.get("count", 3)
+            for entry in feed.entries[:limit]: 
                 news_list.append(f"【{src['name']}】{entry.title}")
         except: pass
     return "\n".join(news_list)
@@ -158,10 +160,14 @@ def send_rich_email(title, md_content, filename):
         p { margin-bottom: 15px; text-align: justify; font-size: 15px; }
         ul { padding-left: 20px; margin-bottom: 20px; }
         li { margin-bottom: 10px; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
-        th, td { border: 1px solid #e1e4e8; padding: 10px; text-align: center; }
-        th { background-color: #f6f8fa; }
-        /* 故事引用块特别样式 */
+        
+        /* 表格样式增强 */
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 4px; overflow: hidden; }
+        th, td { border: 1px solid #e1e4e8; padding: 8px 5px; text-align: center; }
+        th { background-color: #f6f8fa; color: #333; font-weight: bold; }
+        /* 让配置表的最后一列稍微宽一点 */
+        td:last-child { text-align: left; padding-left: 10px; color: #555; }
+        
         blockquote { border-left: 4px solid #f9a825; background: #fffde7; padding: 15px; margin: 20px 0; color: #555; border-radius: 6px; font-style: italic;}
         strong { color: #d32f2f; }
         .footer { font-size: 12px; color: #999; margin-top: 40px; text-align: center; border-top: 1px solid #eee; padding-top: 10px; }
@@ -195,27 +201,22 @@ def generate_report():
     news = get_news_brief()
     knowledge = get_obsidian_knowledge()
     
-    print("🤖 Gemini 正在构思历史故事与投资哲学...")
+    print("🤖 Gemini 正在构思历史故事与全天候策略...")
     
     prompt = f"""
     【角色设定】
     你叫朱文翔，一名资深、稳健的投资顾问。
     你的读者是**有一定资产、但风险偏好较低的保险意向客户**。
-    他们不追求一夜暴富，而是关心**“如何守住财富”**和**“长期复利”**。
-
-    【核心理念库 (不需要外部输入，请调用你内部的金融知识)】
-    你的所有建议必须基于以下四大支柱之一（每天选一个最契合新闻的）：
-    1. **反脆弱 (Anti-fragile)**：利用波动获利，而不是害怕波动。
-    2. **全天候策略 (All-Weather)**：无论经济好坏，资产配置都能活下来。
-    3. **价值投资 (Value Investing)**：买得便宜，安全边际。
-    4. **长期主义 (Long-termism)**：做时间的朋友，忽略短期噪音。
+    
+    【核心理念】
+    你信奉**全天候策略 (All-Weather)** 和 **反脆弱**，强调利用保险和固收资产作为家庭财富的“压舱石”。
 
     【日期】{date_str}
 
     【素材】
     1. 行情：\n{market}
-    2. 新闻池：\n{news}
-    3. 客户笔记（仅作参考，不必每次都硬引用）：\n{knowledge}
+    2. 新闻池（请从中筛选）：\n{news}
+    3. 笔记：\n{knowledge}
 
     【任务】撰写《家庭财富风险管理日报》。
 
@@ -223,30 +224,34 @@ def generate_report():
 
     **第一部分：核心资产看板**
     - 展示表格。
-    - 用“大白话”简评一下今天的市场（例如：今天A股有点冷，黄金倒是很坚挺）。
+    - 用“大白话”简评市场。
 
     **第二部分：财经要闻（Top 5）**
     - 筛选 5 条最重要新闻。
+    - **强制要求：其中必须至少包含 1 条中国国内的重要宏观或政策新闻**（从新浪源中选取）。
     - **强制中文标题**。
     - 格式：`1. [标题]` -> `[一句话事实]` -> `> 💡 对家庭财富的影响：...`
 
-    **第三部分：历史映照与行动指南 (重点)**
-    *请完全重写这部分，不要只罗列指令，要讲故事。*
+    **第三部分：历史映照与行动指南**
     
     1. **【今日锚点】**：
-       - 从上面的新闻中挑一个最热的点。
+       - 挑一个热点话题。
     
     2. **【历史回响】(讲故事)**：
-       - **核心要求**：不要干巴巴讲道理。请调用你的历史知识库，找一个**历史上的经典案例**或**名人轶事**，来映射今天的新闻。
-       - *举例*：如果今天股市大跌，可以讲讲1987年黑色星期一巴菲特在干什么；如果通胀高企，可以讲讲70年代的黄金故事；如果有人爆仓，可以讲讲牛顿炒股亏钱的故事。
-       - *目的*：让客户觉得“阳光底下无新鲜事”，从而感到安心。
+       - 找一个**历史经典案例**（如大萧条、郁金香泡沫、历次降息周期等）来映射今天的新闻。
+       - 目的：告诉客户“太阳底下无新鲜事”，长期主义能战胜波动。
     
-    3. **【投资心法】**：
-       - 结合上面的故事，引出今天的核心理念（从反脆弱/全天候/价值/长期主义中**选一个**）。
-    
-    4. **【给您的建议】(保险/配置导向)**：
-       - 给出一个具体的、稳健的建议。
-       - **话术要求**：要结合“保险”或“安全资产”的概念。比如提到“安全垫”、“家庭备用金”、“锁定利率”等。让客户意识到配置保险或固收资产的必要性。
+    3. **【给您的建议】(展示配置表)**：
+       - 结合今日行情，给出一个简短的建议（如：保持定力，检查现金流）。
+       - **必须展示**一张《家庭资产全天候配置参考表》（Markdown表格形式）。
+       - **表格要求**：根据今天的市场环境（比如是进攻期还是防御期），微调以下比例，但总体要符合“全天候”逻辑。
+       - **参考格式**：
+         | 资产角色 | 建议比例 | 典型标的 | 作用 |
+         | :--- | :--- | :--- | :--- |
+         | **进攻矛** | 20-30% | 优质股票/权益基金 | 博取长期超额收益 |
+         | **防御盾** | 40-50% | **年金险/增额寿/国债** | **锁定利率，家庭兜底** |
+         | **避风港** | 10-20% | 黄金/硬通货 | 对冲极端风险 |
+         | **现金流** | 10% | 货币基金/活期 | 随时应急 |
     """
     
     try:
@@ -261,7 +266,7 @@ def generate_report():
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(response.text)
             
-            send_rich_email(f"【内参】{date_str} 历史映照与投资策略", response.text, filepath)
+            send_rich_email(f"【内参】{date_str} 历史映照与配置建议", response.text, filepath)
         else:
             print("❌ 生成内容为空")
             

@@ -1,0 +1,47 @@
+name: 📊 每日财富日报
+
+on:
+  # 定时触发：每天北京时间 6:45（UTC 22:45）
+  schedule:
+    - cron: '45 22 * * *'
+  
+  # 手动触发（方便测试）
+  workflow_dispatch:
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. 检出代码
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+      
+      # 2. 安装 Python
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      # 3. 安装依赖
+      - name: 📦 Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      # 4. 运行脚本
+      - name: 🚀 Generate Report
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python financial_report.py
+      
+      # 5. (可选) 上传报告为 Artifact
+      - name: 📤 Upload Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report
+          path: AI_Reports/
+          retention-days: 30
